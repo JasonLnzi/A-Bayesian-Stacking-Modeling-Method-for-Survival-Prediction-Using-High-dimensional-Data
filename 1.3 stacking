@@ -1,0 +1,254 @@
+
+library(BhGLM)
+library(glmnet)
+
+library("rms")
+library(survival)
+library(riskRegression)
+library("pec")
+library(pROC)
+
+library(lbiassurv)
+library(fdrtool)
+library(distr)
+library(VGAM)
+library(pracma)
+library(Rcpp)
+library(Rsolnp)
+
+rm(list=ls())
+ls()
+
+
+source("bmlasso.R")
+source("prepare.R")
+source("update.R")
+source("bmlasso1.R")
+source("update1.R")
+source("bs.t.R")
+source("glmNet1.R")
+
+
+load("data.collection1.Rdata")
+load("data_test1.Rdata")
+
+
+train_list = data.collection
+test_list = data_list
+y_test = y.test_list
+
+
+# 1.sslasso
+e_sslasso_75 = {}
+e_sslasso_75[[11]] =  1
+i = 1
+for (i in 1:100) {
+  
+  opt.dat = train_list[[i]]
+  
+  St = opt.dat[, 4:ncol(opt.dat)]
+  y.dat = opt.dat[, 2]
+  #weight = opt.dat[, 1]
+  
+  
+  opt.dat1 = test_list[[i]]
+  opt.dat1 = subset(opt.dat1, substr(rownames(opt.dat1), 2, 3)  == 75)
+  #opt.dat1 = subset(opt.dat1, substr(rownames(opt.dat1), 2, 3)  <= 75)
+  
+  St1 = opt.dat1[, 4:ncol(opt.dat1)]
+  St1 = cbind(1, St1)
+  y.dat1 = opt.dat1[, 2]
+  
+  
+  # 1.sslasso
+  s0 = 0.01
+  h = 1
+  for (s0 in seq(0.01, 0.10, 0.01)) {
+    
+    ss = c(s0, 1)
+    
+    #f_ss = bmlasso1(St, y.dat, family = "binomial", ss = ss, group = 1, weight = weight)
+    f_ss = bmlasso1(St, y.dat, family = "binomial", ss = ss, group = 1)
+    
+    coefs.S <- f_ss$coefficients
+    coefs.S = as.matrix(coefs.S)
+    
+    
+    Y_pred = St1 %*% coefs.S
+    y_pred = 1/(1+exp(-Y_pred))
+    
+    opt.dat2 = cbind(y.dat1, y_pred)
+    opt.dat2 = as.data.frame(opt.dat2)
+    colnames(opt.dat2) = c("y.dat1", "y_pred")
+    
+    
+    L <- dbinom(y.dat1, size=1, prob=y_pred, log=FALSE)
+    L <- ifelse(L == 0, 1e-04, L)
+    logL <- log(L)
+    logL <- sum(logL, na.rm=TRUE)
+    
+    deviance = -2 * logL
+    auc = roc(opt.dat2, y.dat1, y_pred)$auc
+    BS = mean((y.dat1 - y_pred)^2, na.rm = TRUE)
+    misclassification = mean(abs(y.dat1 - y_pred) >= 0.5, na.rm = TRUE)
+    
+    mearsure = NULL
+    mearsure = cbind(mearsure, deviance)
+    mearsure = cbind(mearsure, auc)
+    mearsure = cbind(mearsure, BS)
+    mearsure = cbind(mearsure, misclassification)
+    
+    e_sslasso_75[[h]] = rbind(e_sslasso_75[[h]], mearsure)
+    
+    h = h + 1
+    
+  } 
+  
+}
+
+
+{
+  e1 = e_sslasso_75[[1]]
+  e2 = e_sslasso_75[[2]]
+  e3 = e_sslasso_75[[3]]
+  e4 = e_sslasso_75[[4]]
+  e5 = e_sslasso_75[[5]]
+  e6 = e_sslasso_75[[6]]
+  e7 = e_sslasso_75[[7]]
+  e8 = e_sslasso_75[[8]]
+  e9 = e_sslasso_75[[9]]
+  e10 = e_sslasso_75[[10]]
+}
+
+
+ess_dev = cbind(e1[, 1], e2[, 1], e3[, 1], e4[, 1], e5[, 1], e6[, 1], e7[, 1], e8[, 1], e9[, 1], e10[, 1])
+dev = apply(ess_dev, 1, min)
+
+ess_auc = cbind(e1[, 2], e2[, 2], e3[, 2], e4[, 2], e5[, 2], e6[, 2], e7[, 2], e8[, 2], e9[, 2], e10[, 2])
+Auc = apply(ess_auc, 1, max)
+
+ess_bs = cbind(e1[, 3], e2[, 3], e3[, 3], e4[, 3], e5[, 3], e6[, 3], e7[, 3], e8[, 3], e9[, 3], e10[, 3])
+I_BS = apply(ess_bs, 1, min)
+
+ess_mis = cbind(e1[, 4], e2[, 4], e3[, 4], e4[, 4], e5[, 4], e6[, 4], e7[, 4], e8[, 4], e9[, 4], e10[, 4])
+Mis = apply(ess_mis, 1, min)
+
+
+# d1 = rbind(mean(Auc), mean(I_BS))
+# d1
+# 
+# d2 = rbind(sd(Auc), sd(I_BS))
+# d2
+
+
+
+# 2.lasso/solnp
+e_solnp_75 = e_lasso_75 = NULL
+i = 1
+m = ncol(St)
+for (i in 1:100) {
+  
+  opt.dat = train_list[[i]]
+  
+  St = opt.dat[, 4:ncol(opt.dat)]
+  y.dat = opt.dat[, 2]
+  weight = opt.dat[, 1]
+  
+  opt.dat1 = test_list[[i]]
+  opt.dat1 = subset(opt.dat1, substr(rownames(opt.dat1), 2, 3)  == 75)
+  #opt.dat1 = subset(opt.dat1, substr(rownames(opt.dat1), 2, 3)  <= 75)
+  
+  St1 = opt.dat1[, 4:ncol(opt.dat1)]
+  St2 = cbind(1, St1)
+  y.dat1 = opt.dat1[, 2]
+  
+  
+  # 2.solnp
+  #fr1 = function(x){ sum(weight * (y.dat - St %*% t(t(x))) ^ 2) }
+  fr1 = function(x){ sum((y.dat - St %*% t(t(x))) ^ 2) }
+  
+  sm1 <- function(x){																		# Set summation constraint
+    fnl <- sum(x)
+    fnl
+  }
+  
+  stck1 <-solnp(rep(1/m, m), fun = fr1, eqfun = sm1, eqB = 1, LB = rep(0, m),
+                UB = rep(1, m), control = list(trace = 0))$pars
+  
+  stck1 = as.matrix(stck1)
+  y_pred = St1 %*% stck1
+  
+  opt.dat2 = cbind(y.dat1, y_pred)
+  opt.dat2 = as.data.frame(opt.dat2)
+  colnames(opt.dat2) = c("y.dat1", "y_pred")
+  
+  
+  L <- dbinom(y.dat1, size=1, prob=y_pred, log=FALSE)
+  L <- ifelse(L == 0, 1e-04, L)
+  logL <- log(L)
+  logL <- sum(logL, na.rm=TRUE)
+  
+  deviance = -2 * logL
+  auc = roc(opt.dat2, y.dat1, y_pred)$auc
+  BS = mean((y.dat1 - y_pred)^2, na.rm = TRUE)
+  misclassification = mean(abs(y.dat1 - y_pred) >= 0.5, na.rm = TRUE)
+  
+  mearsure = NULL
+  mearsure = cbind(mearsure, deviance)
+  mearsure = cbind(mearsure, auc)
+  mearsure = cbind(mearsure, BS)
+  mearsure = cbind(mearsure, misclassification)
+  
+  e_solnp_75 = rbind(e_solnp_75, mearsure)
+  
+  
+  #3.lasso
+  #fL = glmnet(St, y.dat, family = "binomial", lower.limits = 0, intercept = T, standardize = T, weights = weight)
+  #cv.fL <- cv.glmnet(St, y.dat, family = "binomial", lower.limits = 0, intercept = T, standardize = T, weights = weight)
+  
+  fL = glmnet(St, y.dat, family = "binomial", lower.limits = 0, intercept = T, standardize = T)
+  cv.fL <- cv.glmnet(St, y.dat, family = "binomial", lower.limits = 0, intercept = T, standardize = T)
+  
+  coefs.L <- as.matrix(coef(cv.fL, s = "lambda.min")[])
+  
+  Y_pred = St2 %*% coefs.L
+  y_pred = 1/(1+exp(-Y_pred))
+  
+  opt.dat2 = cbind(y.dat1, y_pred)
+  opt.dat2 = as.data.frame(opt.dat2)
+  colnames(opt.dat2) = c("y.dat1", "y_pred")
+  
+  
+  L <- dbinom(y.dat1, size=1, prob=y_pred, log=FALSE)
+  L <- ifelse(L == 0, 1e-04, L)
+  logL <- log(L)
+  logL <- sum(logL, na.rm=TRUE)
+  
+  deviance = -2 * logL
+  auc = roc(opt.dat2, y.dat1, y_pred)$auc
+  BS = mean((y.dat1 - y_pred)^2, na.rm = TRUE)
+  misclassification = mean(abs(y.dat1 - y_pred) >= 0.5, na.rm = TRUE)
+  
+  mearsure = NULL
+  mearsure = cbind(mearsure, deviance)
+  mearsure = cbind(mearsure, auc)
+  mearsure = cbind(mearsure, BS)
+  mearsure = cbind(mearsure, misclassification)
+  
+  e_lasso_75 = rbind(e_lasso_75, mearsure)
+  
+}
+
+
+d1 = rbind(mean(Auc), mean(I_BS))
+d2 = rbind(sd(Auc), sd(I_BS))
+d3 = rbind(apply(e_solnp_75,2,mean), apply(e_lasso_75,2,mean))
+d4 = rbind(apply(e_solnp_75,2,sd), apply(e_lasso_75,2,sd))
+
+
+d1
+d2
+d3
+d4
+
+save.image("S1.Rdata")
