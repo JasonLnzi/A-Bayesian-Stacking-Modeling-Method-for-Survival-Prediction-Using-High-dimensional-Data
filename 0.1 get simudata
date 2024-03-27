@@ -1,0 +1,449 @@
+
+library(BhGLM)
+library(glmnet)
+
+rm(list=ls(all=TRUE))
+ls()
+
+###### start ######
+n = 500
+m = 1000     ####change here  #we only set m=1000 for simulation study
+pathway.n = 20
+
+qtl = c(5, 20, 40, 210, 220, 240, 975, 995); length(qtl)
+pos = seq(0, m, by = m/pathway.n); pos; length(pos)
+
+varnames = c(paste("x", c(1:m), sep=""))
+qtlnames = c(paste("x", qtl, sep="")); qtlnames
+
+#non-zero coefficients
+# for S1-3
+cc = c(0.80, -0.70, 1.00, -0.9, -0.80, 0.90, -1.00, 0.70)
+names(cc) = qtlnames
+c01 = rep(0, m); names(c01) = varnames 
+c01[names(cc)] = cc
+
+# for S4-6
+cc = c(0.80, -0.30, 1.40, -0.9, -0.80, 0.90, -1.50, 0.20)
+names(cc) = qtlnames
+c02 = rep(0, m); names(c02) = varnames 
+c02[names(cc)] = cc
+
+
+coefs <- c(cc, rep(0, m - length(cc)))
+
+#save(c01, c02, file = "coefs.Rdata")
+
+########## setting 2: over-lapping
+# pathway = paste("pathway", c(1:pathway.n), sep = "")
+# 
+# ii=0
+# group2=list()
+# for (jj in pathway){
+#   ii=ii+1
+#   if (ii==1){
+#     group2[[jj]] = c(paste("x", c((pos[ii]+1):pos[ii+1]),sep=""))  
+#   } else
+#   {
+#     group2[[jj]] = c(paste("x", c((pos[ii]-4):pos[ii+1]),sep=""))  
+#   }
+# }
+# group2[["pathway20"]]= c(group2[["pathway20"]][-c(1:5)])
+# 
+# ### setting 2
+# #  pathway1 = x5,x20,x40, + x210,x220
+# #  pathway5 = x210, x220,x240, + x40
+# #  pathway10 = x475, x495, + x210, x220
+# group2[["pathway1"]]=c("x210","x220", group2[["pathway1"]]);    group2[["pathway1"]];    ## add "x210","x220"  to this group
+# group2[["pathway5"]]= c("x40", group2[["pathway5"]]);           group2[["pathway5"]];    ## add "x40"  to this group
+# group2[["pathway20"]]= c("x210","x220", group2[["pathway20"]]); group2[["pathway20"]];   ## add "x210","x220"  to this group
+
+save(group2, file = "group.Rdata")
+
+load("./group.Rdata")
+
+###### simu ######
+#####
+usedgroup = group2
+
+ro = 0.6
+
+#x = sim.x(n = 20000, m = m, group = usedgroup, corr = ro)
+#save(x, file = "Pseudo R_square.Rdata")
+load(file = "Pseudo R_square.Rdata")
+
+# for S1-3
+sigma = 0.35 #0.35 2.47 5.14
+
+# for S4-6
+sigma = 6.80 #1.35 3.50 6.80
+
+
+###0. Pseudo R_square
+set.seed(123)
+pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma)
+#eta = pheno$eta
+y.normal = pheno$y.normal
+
+set.seed(123)
+u <- runif(20000, 0, 1)        
+
+T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+
+set.seed(123)
+C <- trunc(runif(20000, 0, 10))  
+table(C)
+
+event <- c(rep(1, 20000))
+
+pc = 0.5 #0.4 0.5 0.6
+for (i in 1:20000){   
+
+  if (C[i] <= 9*pc) event[i] <- 0
+
+}
+
+table(event)  
+
+y <- Surv(T1, event)
+
+
+#1
+library(rms)
+library(rsq)
+library(CoxR2)
+
+data = cbind(y, x)
+model.full <- coxph(y ~ x5 + x20 + x40 + x210 + x220 + x240 + x975 + x995, data = data)
+summary(model.full) 
+coxr2(model.full) #0.500 0.250 0.100
+
+
+
+#############################################
+###################simulate data#############################
+#############################################
+
+############################### grouping 2  simple overlap 
+## for group setting 1
+n.sim = 100
+datalist1 = list()
+usedgroup = group2
+ro = 0.6  #cc = c(0.80, -0.70, 1.00, -0.9, -0.80, 0.90, -1.00, 0.70)
+sigma = 0.35  #0.35 2.47 5.14
+pc = 0.5 #censor proportion
+
+for (iter in 1:n.sim) {
+  
+  x = sim.x(n = n, m = m, group = usedgroup , corr = ro) 
+  pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal
+  
+  u <- runif(n, 0, 1)        
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10))  
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+
+  y <- Surv(T1, event)
+  
+  
+  x1 = sim.x(n = n, m = m, group = usedgroup , corr = ro)  
+  pheno = sim.y(x = x1[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal 
+  
+  u <- runif(n, 0, 1)         
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10))  
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y1 <- Surv(T1, event)
+  
+  datalist1[[iter]]=list(x, y, x1, y1)
+  
+  ## grouping 2    
+  pre <- rep("\b", n.sim + 1)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  
+}  
+
+save(datalist1, usedgroup, file = ".\\Scenario1.Rdata")
+
+
+############################### grouping 2  simple overlap 
+## for group setting 2
+n.sim = 100
+datalist2 = list()
+usedgroup = group2
+ro = 0.6  #cc = c(0.80, -0.70, 1.00, -0.9, -0.80, 0.90, -1.00, 0.70)
+sigma = 2.47  #0.35 2.47 5.14
+pc = 0.5 #censor proportion
+
+for (iter in 1:n.sim) {
+  
+  x = sim.x(n = n, m = m, group = usedgroup , corr = ro) 
+  pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal
+  
+  u <- runif(n, 0, 1)     
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10))   
+  event <- c(rep(1, n))
+  for (i in 1:n){   
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y <- Surv(T1, event)
+  
+  
+  x1 = sim.x(n = n, m = m, group = usedgroup , corr = ro)  
+  pheno = sim.y(x = x1[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal 
+  
+  u <- runif(n, 0, 1)        
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){   
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y1 <- Surv(T1, event)
+  
+  datalist2[[iter]]=list(x, y, x1, y1)
+  
+  ## grouping 2    
+  pre <- rep("\b", n.sim + 1)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  
+}  
+
+save(datalist2, usedgroup, file = ".\\Scenario2.Rdata")
+
+
+############################### grouping 2  simple overlap 
+## for group setting 3
+n.sim = 100
+datalist3 = list()
+usedgroup = group2
+ro = 0.6  #cc = c(0.80, -0.70, 1.00, -0.9, -0.80, 0.90, -1.00, 0.70)
+sigma = 5.14  #0.35 2.47 5.14
+pc = 0.5 #censor proportion
+
+for (iter in 1:n.sim) {
+  
+  x = sim.x(n = n, m = m, group = usedgroup , corr = ro) 
+  pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal
+  
+  u <- runif(n, 0, 1)      
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y <- Surv(T1, event)
+  
+  
+  x1 = sim.x(n = n, m = m, group = usedgroup , corr = ro)  
+  pheno = sim.y(x = x1[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal 
+  
+  u <- runif(n, 0, 1)       
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y1 <- Surv(T1, event)
+  
+  datalist3[[iter]]=list(x, y, x1, y1)
+  
+  ## grouping 2    
+  pre <- rep("\b", n.sim + 1)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  
+}  
+
+save(datalist3, usedgroup, file = ".\\Scenario3.Rdata")
+
+
+############################### grouping 2  simple overlap 
+## for group setting 4
+n.sim = 100
+datalist4 = list()
+usedgroup = group2
+ro = 0.6  #c(0.80, -0.30, 1.40, -0.9, -0.80, 0.90, -1.50, 0.20)
+sigma = 1.35  #1.35 3.50 6.80
+pc = 0.5 #censor proportion
+
+for (iter in 1:n.sim) {
+  
+  x = sim.x(n = n, m = m, group = usedgroup , corr = ro) 
+  pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal
+  
+  u <- runif(n, 0, 1)        
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10))  
+  event <- c(rep(1, n))
+  for (i in 1:n){   
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y <- Surv(T1, event)
+  
+  
+  x1 = sim.x(n = n, m = m, group = usedgroup , corr = ro)  
+  pheno = sim.y(x = x1[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal 
+  
+  u <- runif(n, 0, 1)       
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){ 
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y1 <- Surv(T1, event)
+  
+  datalist4[[iter]]=list(x, y, x1, y1)
+  
+  ## grouping 2    
+  pre <- rep("\b", n.sim + 1)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  
+}  
+
+save(datalist4, usedgroup, file = ".\\Scenario4.Rdata")
+
+
+############################### grouping 2  simple overlap 
+## for group setting 5
+n.sim = 100
+datalist5 = list()
+usedgroup = group2
+ro = 0.6  #c(0.80, -0.30, 1.40, -0.9, -0.80, 0.90, -1.50, 0.20)
+sigma = 3.50  #1.35 3.50 6.80
+pc = 0.5 #censor proportion
+
+for (iter in 1:n.sim) {
+  
+  x = sim.x(n = n, m = m, group = usedgroup , corr = ro) 
+  pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal
+  
+  u <- runif(n, 0, 1)        
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y <- Surv(T1, event)
+  
+  
+  x1 = sim.x(n = n, m = m, group = usedgroup , corr = ro)  
+  pheno = sim.y(x = x1[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal 
+  
+  u <- runif(n, 0, 1)        
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y1 <- Surv(T1, event)
+  
+  datalist5[[iter]]=list(x, y, x1, y1)
+  
+  ## grouping 2    
+  pre <- rep("\b", n.sim + 1)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  
+}  
+
+save(datalist5, usedgroup, file = ".\\Scenario5.Rdata")
+
+
+############################### grouping 2  simple overlap 
+## for group setting 6
+n.sim = 100
+datalist6 = list()
+usedgroup = group2
+ro = 0.6  #c(0.80, -0.30, 1.40, -0.9, -0.80, 0.90, -1.50, 0.20)
+sigma = 6.80  #1.35 3.50 6.80
+pc = 0.5 #censor proportion
+
+for (iter in 1:n.sim) {
+  
+  x = sim.x(n = n, m = m, group = usedgroup , corr = ro) 
+  pheno = sim.y(x = x[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal
+  
+  u <- runif(n, 0, 1)        
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10)) 
+  event <- c(rep(1, n))
+  for (i in 1:n){  
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y <- Surv(T1, event)
+  
+  
+  x1 = sim.x(n = n, m = m, group = usedgroup , corr = ro)  
+  pheno = sim.y(x = x1[qtlnames], coefs = cc, sigma = sigma) 
+  y.normal = pheno$y.normal 
+  
+  u <- runif(n, 0, 1)       
+  T1 <- (-log(u)/(3*exp(y.normal)))^(1/3)
+  
+  C <- trunc(runif(n, 0, 10))  
+  event <- c(rep(1, n))
+  for (i in 1:n){   
+    if (C[i] <= 9*pc) event[i] <- 0
+  }
+  
+  y1 <- Surv(T1, event)
+  
+  datalist6[[iter]]=list(x, y, x1, y1)
+  
+  ## grouping 2    
+  pre <- rep("\b", n.sim + 1)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  
+}  
+
+save(datalist6, usedgroup, file = ".\\Scenario6.Rdata")
+
