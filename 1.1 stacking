@@ -1,0 +1,197 @@
+
+library(BhGLM)
+library(glmnet)
+
+library("rms")
+library(survival)
+library(riskRegression)
+library("pec")
+
+library(lbiassurv)
+library(fdrtool)
+library(distr)
+library(VGAM)
+library(pracma)
+library(Rcpp)
+library(Rsolnp)
+
+rm(list=ls(all=TRUE))
+ls()
+
+source("bmlasso.R")
+source("prepare.R")
+source("update.R")
+source("bmlasso1.R")
+source("update1.R")
+source("bs.t.R")
+source("glmNet1.R")
+
+
+############################### grouping 2  simple overlap  ###############################
+
+load("./Scenario1.Rdata")
+
+############################### grouping 2  simple overlap
+
+datalist = datalist1
+
+
+fold = 2
+ind = 1
+
+c = 1
+m = 20
+n.sim = 100
+data.collection = {}
+
+
+iter = 1
+start.time <- Sys.time()
+
+###### run
+for (iter in 1:n.sim) {
+  
+  x = datalist[[iter]][[1]]
+  x.train = as.matrix(x)
+  
+  y.train = datalist[[iter]][[2]]
+  y.train1 = as.matrix(y.train)
+  
+  
+  ############################# 0.grouping #############################
+  D <- data.frame(x.train, y.train)
+   
+  
+  # Specify the number of folds for V-fold cross-validation
+  set.seed(123)
+  folds = 5
+  splt <- split(D, 1:folds)
+  
+  
+  datalist1 <- lapply(1:folds, function(ii) data = do.call(rbind, splt[-ii]))
+  datalist2 <- lapply(1:folds, function(ii) data = do.call(rbind, splt[ ii]))
+  
+  
+  ############################# 1.stacking #############################
+  ### 0 layer: five-fold CV
+  LP0 = BZ0 = NULL
+  
+  # run
+  i = 1
+  for (i in 1:folds) {
+    
+    xx0 = datalist1[[i]][, -1001]
+    xx0 = as.matrix(xx0)
+    yy0 = datalist1[[i]][, 1001]
+    
+    xx1 = datalist2[[i]][, -1001]
+    xx1 = as.matrix(xx1)
+    yy1 = datalist2[[i]][, 1001] 
+    
+    LP = NULL
+    BZ = NULL
+    
+    # fit 20 models
+    j = 1
+    for (j in 1:length(usedgroup)) {
+     
+      xxx0 = xx0[, usedgroup[[j]]]
+      xxx1 = xx1[, usedgroup[[j]]]
+      
+      fL = glmnet(xxx0, yy0, family = "cox")
+      cv.fL <- cv.glmnet(xxx0, yy0, family = "cox")
+      
+      lp1 = predict(fL, xxx1, s = cv.fL$lambda.min, type = "link")
+      colnames(lp1) = paste("M", j, sep = "")
+      LP = cbind(LP, lp1)
+      
+      datFitted = data.frame(xxx0, yy0)
+      datFitted$lp0 = predict(fL, xxx0, s = cv.fL$lambda.min, type = "link")
+      
+      model.train <- cph(Surv(time, status) ~ lp0, 
+                              data = datFitted, 
+                              init = 1, iter.max = 0,
+                              x = TRUE, y = TRUE, surv = TRUE)
+      
+      Hazard <- basehaz(model.train, centered = F)
+      Hazard <- Hazard[!duplicated(Hazard$hazard), ]
+      base_H = as.matrix(Hazard[, 1]) 
+      colnames(base_H) = paste("M", j, sep = "")
+      BZ = cbind(BZ, base_H)
+
+    }
+    
+    LP0 = rbind(LP0, LP)
+    
+    time_P = as.matrix(Hazard[, 2]) 
+    colnames(time_P) = "time"
+    BZ = cbind(time_P, BZ)
+    BZ0 = rbind(BZ0, BZ)
+    
+  }
+  
+  
+  LP_0 = LP0
+  rownames(LP_0) = substring(rownames(LP_0), 3, length(rownames(LP_0)))
+  LP_0 = cbind(as.numeric(rownames(LP_0)), LP_0)
+  LP_0 = LP_0[order(LP_0[,1]), ]
+  LP_0 = LP_0[, -1]
+  
+  BZ0 = as.data.frame(BZ0)
+  BZ1 <- BZ0[!duplicated(BZ0$time), ]
+  BZ1 = BZ1[order(BZ1$time), ]
+
+  
+  # return weight, Zind, and Evaluate survival for cv.grps at time t
+  tt = quantile(y.train1[, 1], probs = seq(0, 1, 1/8)) #nine evenly spaced quantiles of the observed event
+  
+  cross.dat = as.matrix(y.train)
+  cross.fwrd.dat = as.data.frame(cross.dat)
+  St1 = brier.stacked = NULL
+  
+  for (a in 1:length(tt)) {
+    
+    # Compute weight, Zind at time point t
+    brier.single = bs.dat.t(cross.fwrd.dat, tt[a])
+    brier = brier.single$rslt
+    brier.stacked = rbind(brier.stacked, brier)
+    
+    # Compute censoring survival at time point t
+    St0 = NULL
+    for (b in 1:ncol(LP_0)) {
+      
+      index = which(abs(BZ1$time - tt[a]) == min(abs(BZ1$time - tt[a])))
+      S0 <- exp(-BZ1[index, b+1])
+      
+      St = S0^(exp(LP_0[, b]))
+      St = St[brier.single$booRemove]
+      St = as.matrix(St)
+      colnames(St) = paste("M", b, sep = "")
+      St0 = cbind(St0, St)
+      
+    }
+    
+    St1 = rbind(St1, St0)
+
+  }
+  
+  opt.dat = cbind(brier.stacked, St1)						# Bind all the optimization quantities together
+  opt.dat = as.matrix(opt.dat)
+  data.collection[[c]] = opt.dat
+  
+  
+  ### end
+  pre <- rep("\b", c)
+  cat(pre, iter, "/", n.sim, sep = "")
+  flush.console()
+  c = c + 1
+  
+}
+
+stop.time <- Sys.time()
+minutes <- round(difftime(stop.time, start.time, units = "min"), 3)
+cat("simulation time:", minutes, "minutes \n")
+
+# 134.009 minutes
+
+save(data.collection, file = "data.collection1.Rdata")
